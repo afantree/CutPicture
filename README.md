@@ -1,0 +1,2 @@
+# CutPicture
+plist png TexturePacker 
