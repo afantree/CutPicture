@@ -7,7 +7,7 @@
 细思之后，还是写个MAC版的吧，避免出现环境配置等问题。代码也就放在上面吧，自己稍微调整即可运行。
 
 ## 下载
-[点击下载](https://github.com/afantree/CutPicture/files/670502/CutPicture.app.zip)
+[点击下载](https://github.com/afantree/CutPicture/files/670502/CutPicture.app.zip)(ZIP解压开即可运行)
 
 ## 鸣谢
 
