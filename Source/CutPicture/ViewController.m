@@ -42,6 +42,7 @@ typedef NS_ENUM(NSInteger,TextFieldType) {
 @property (strong) NSOpenPanel *openPanel;
 @property (strong) NSURL * selectedPath;
 @property (strong) IBOutlet NSTextField *tipLabel;
+@property (strong) IBOutlet NSButton *radioButton;
 @end
 
 @implementation ViewController
@@ -138,6 +139,65 @@ typedef NS_ENUM(NSInteger,TextFieldType) {
 #pragma mark - Button Action
 
 - (IBAction)cut:(NSButton *)sender {
+    if (self.radioButton.state == NSOnState) {
+        [self folderCut];
+    } else {
+        [self normalCut];
+    }
+}
+
+- (void)folderCut {
+    if (![self checkOutput]) {
+        return;
+    }
+    [self circleFind:_outputTextField.stringValue];
+}
+
+- (void)circleFind:(NSString *)path {
+    NSError* error = nil;
+    NSArray* pathArray = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:&error];
+    if (error) {
+        NSLog(@"error = %@",error);
+        return;
+    }
+    for (NSString* item in pathArray) {
+        if ([item isEqualToString:@".DS_Store"]) {
+            continue;
+        }
+        BOOL isDirectory = NO;
+        NSString* filename = [NSString stringWithFormat:@"%@/%@",path,item];
+        [[NSFileManager defaultManager] fileExistsAtPath:filename isDirectory:&isDirectory];
+        if (isDirectory) {
+            [self circleFind:filename];
+        }
+        if ([item hasSuffix:@".png"]) {
+            NSString* plistName = [filename stringByReplacingOccurrencesOfString:@".png" withString:_plistTextField.stringValue];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:plistName]) {
+                NSDictionary* plist = nil;
+                if ([_plistTextField.stringValue isEqualToString:@".plist"]) {
+                    plist = [NSDictionary dictionaryWithContentsOfFile:plistName];
+                } else {
+                    plist = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:plistName] options:NSJSONReadingMutableContainers error:&error];
+                }
+                if (error) {
+                    NSLog(@"error = %@",error);
+                    continue;
+                }
+                if (![plist isKindOfClass:[NSDictionary class]]) {
+                    continue;
+                }
+                NSImage* image = [[NSImage alloc] initWithContentsOfFile:filename];
+                if (image == nil) {
+                    continue;
+                }
+                [self cutImage:image withDict:plist outputPath:path];
+            }
+        }
+        NSLog(@"item = %@",filename);
+    }
+}
+
+- (void)normalCut {
     if (_pngTextField.stringValue.length == 0 || _plistTextField.stringValue.length == 0 || _outputTextField.stringValue.length ==0) {
         [NSAlert alertWithErrorMessage:@"路径不能为空"];
         return;
@@ -152,23 +212,43 @@ typedef NS_ENUM(NSInteger,TextFieldType) {
         [NSAlert alertWithErrorMessage:@"png图片有错"];
         return;
     }
+    
+    if (![self checkOutput]) {
+        return;
+    }
+    
+    [self cutImage:image withDict:plist outputPath:_outputTextField.stringValue];
+}
+
+- (BOOL)checkOutput {
     BOOL isDirectory = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:_outputTextField.stringValue isDirectory:&isDirectory]) {
         [NSAlert alertWithErrorMessage:@"输出路径有错"];
-        return;
+        return NO;
     }
     if (!isDirectory) {
         [NSAlert alertWithErrorMessage:@"输出路径请选择文件夹"];
-        return;
+        return NO;
     }
+    return YES;
+}
+
+- (void)cutImage:(NSImage *)image withDict:(NSDictionary *)plist outputPath:(NSString *)path {
     NSDictionary* frames = plist[@"frames"];
     if (frames != nil) {
         for (NSString* key in frames) {
             _tipLabel.stringValue = [NSString stringWithFormat:@"正在裁切 %@",key];
-            if (frames[key][@"frame"] == nil) {
+            NSRect rect = CGRectZero;
+            if (frames[key][@"frame"] != nil) {
+                rect = [self getRightRect:frames[key][@"frame"]];
+            } else {
+                rect = [self getRightRect:frames[key]];
+            }
+            
+            if (CGRectEqualToRect(rect, CGRectZero)) {
                 continue;
             }
-            NSImage* subImage = [image croppedImage:NSRectFromString(frames[key][@"frame"])];
+            NSImage* subImage = [image croppedImage:rect];
             if (CGSizeEqualToSize(subImage.size, CGSizeZero)) {
                 continue;
             }
@@ -176,19 +256,43 @@ typedef NS_ENUM(NSInteger,TextFieldType) {
             if (subData.length == 0 ) {
                 continue;
             }
-            NSString* filename = key;
-            if (![filename hasPrefix:@".png"]) {
+            NSString* filename = [key componentsSeparatedByString:@"/"].lastObject;
+            if (filename == nil || filename.length == 0) {
+                continue;
+            }
+            if (![filename hasSuffix:@".png"]) {
                 filename = [filename stringByAppendingString:@".png"];
             }
             if (subData != nil) {
-                NSString* path = [NSString stringWithFormat:@"%@/%@",_outputTextField.stringValue,filename];
-                if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-                    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+                NSString* outputPath = [NSString stringWithFormat:@"%@/%@",path,filename];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+                    [[NSFileManager defaultManager] removeItemAtPath:outputPath error:nil];
                 }
-                [subData writeToFile:path atomically:YES];
+                [subData writeToFile:outputPath atomically:YES];
             }
         }
         _tipLabel.stringValue = @"已完成";
+    }
+}
+
+- (NSRect)getRightRect:(id)object {
+    if ([object isKindOfClass:[NSString class]]) {
+        return NSRectFromString(object);
+    } else if ([object isKindOfClass:[NSDictionary class]]){
+        NSDictionary* dict = (NSDictionary *)object;
+        if (dict[@"x"] != nil && dict[@"y"] != nil) {
+            if (dict[@"h"] != nil || dict[@"w"] != nil) {
+                return NSMakeRect([dict[@"x"] floatValue], [dict[@"y"] floatValue], [dict[@"w"] floatValue], [dict[@"h"] floatValue]);
+            } else if (dict[@"height"] != nil || dict[@"width"] != nil) {
+                return NSMakeRect([dict[@"x"] floatValue], [dict[@"y"] floatValue], [dict[@"width"] floatValue], [dict[@"height"] floatValue]);
+            } else {
+                return CGRectZero;
+            }
+        } else {
+            return CGRectZero;
+        }
+    } else {
+        return CGRectZero;
     }
 }
 
